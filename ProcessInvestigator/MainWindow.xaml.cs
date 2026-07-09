@@ -14,10 +14,21 @@ namespace ProcessInvestigator
         private readonly ObservableCollection<ProcessRow> _rows = new();
         private readonly ProcessCache _cache = new();
         private readonly ICollectionView _view;
-        private readonly DispatcherTimer _timer = new() { Interval = TimeSpan.FromSeconds(1) };
+
+        // Two-speed refresh, the same split Task Manager itself uses:
+        //   - a cheap 1s tick that only re-samples numbers (CPU/mem/threads/handles)
+        //     for rows that already exist, with no process enumeration and no WMI;
+        //   - a heavier 4s tick that reconciles the row list against reality (safety
+        //     net for any missed watcher event) and refreshes WMI-derived fields
+        //     (parent PID, command line, path) plus hosted-service names.
+        // Process add/remove itself doesn't wait on either timer - ProcessWatcherService
+        // reports that instantly via WMI trace events.
+        private readonly DispatcherTimer _fastTimer = new() { Interval = TimeSpan.FromSeconds(1) };
+        private readonly DispatcherTimer _slowTimer = new() { Interval = TimeSpan.FromSeconds(4) };
         private readonly ProcessInvestigatorService _service = new();
         private readonly ProcessWatcherService _watcher = new();
         private readonly PerformanceUpdater _performanceUpdater = new();
+        private readonly ServiceHostResolver _serviceHostResolver = new();
 
         public MainWindow()
         {
@@ -26,19 +37,21 @@ namespace ProcessInvestigator
             _view = System.Windows.Data.CollectionViewSource.GetDefaultView(_rows);
 
             // Instant add/remove the moment Windows reports a process starting
-            // or exiting, instead of waiting up to 1s for the next poll tick.
+            // or exiting, instead of waiting up to a tick for the next poll.
             _watcher.ProcessStarted += (_, e) => Dispatcher.Invoke(() => AddRowIfMissing(e.Pid, e.Name, e.ParentPid));
             _watcher.ProcessStopped += (_, e) => Dispatcher.Invoke(() => RemoveRow(e.Pid));
             _watcher.WatchError += (_, msg) => Dispatcher.Invoke(() =>
                 StatusText.Text = $"Live process events unavailable ({msg}) - falling back to polling only");
             _watcher.Start();
 
-            // CPU%/memory still need periodic sampling - there's no push API for
-            // that - but this now only has to keep numbers fresh, not detect
-            // new/exited processes, so it can run lighter than before.
-            _timer.Tick += (_, _) => RefreshStats();
-            _timer.Start();
-            RefreshStats();
+            _fastTimer.Tick += (_, _) => RefreshLiveStats();
+            _slowTimer.Tick += (_, _) => ReconcileProcessList();
+            _fastTimer.Start();
+            _slowTimer.Start();
+
+            // First paint shouldn't wait for either timer to fire.
+            ReconcileProcessList();
+            RefreshLiveStats();
         }
 
     private void AddRowIfMissing(int pid, string name, int parentPid)
@@ -68,8 +81,7 @@ namespace ProcessInvestigator
             return;
         }
 
-        if (!string.IsNullOrEmpty(row.ExecutablePath))
-            row.IconSource = IconCache.GetIcon(row.ExecutablePath);
+        EnrichRow(row);
 
         _cache.Add(row);
 
@@ -88,20 +100,35 @@ namespace ProcessInvestigator
 
         _cache.Remove(pid);
         _performanceUpdater.Remove(pid);
+        _serviceHostResolver.Remove(pid);
         _rows.Remove(row);
         StatusText.Text =
             $"{_rows.Count} processes | live | -{row.Name} (PID {pid})";
     }
 
         /// <summary>
-        /// Updates CPU%/memory/path for rows that already exist. Process add/remove
-        /// is handled instantly by the event watcher above; this is a safety-net
-        /// full reconcile too, in case an event was ever missed.
+        /// Fast tick (every 1s): re-samples CPU%/memory/threads/handles for rows that
+        /// already exist. Pure Process.GetProcessById per known PID, no WMI, no full
+        /// process enumeration - this is what keeps the UI feeling smooth instead of
+        /// re-doing a full scan every second like the old engine did.
         /// </summary>
-        private void RefreshStats()
+        private void RefreshLiveStats()
+        {
+            _performanceUpdater.Update(_cache);
+            StatusText.Text = $"{_rows.Count} processes  |  live  |  updated {DateTime.Now:HH:mm:ss}";
+        }
+
+        /// <summary>
+        /// Slow tick (every 4s): the heavier pass. Process add/remove is normally handled
+        /// instantly by the WMI event watcher, so this exists as a safety net in case an
+        /// event was ever missed, plus it's where the WMI-derived fields (parent PID,
+        /// command line, path) and hosted-service names actually get refreshed, since
+        /// those don't change fast enough to justify asking every second.
+        /// </summary>
+        private void ReconcileProcessList()
         {
             var wmi = _service.GetWmiSnapshot();
-            _performanceUpdater.Update(_cache);
+            _performanceUpdater.UpdateThreadsAndHandles(_cache);
 
             var seenPids = new HashSet<int>();
             var processes = Process.GetProcesses();
@@ -122,7 +149,6 @@ namespace ProcessInvestigator
                     };
 
                     _cache.Add(existing);
-
                     _rows.Add(existing);
                 }
 
@@ -130,29 +156,49 @@ namespace ProcessInvestigator
                 existing.CommandLine = wmiInfo?.CommandLine ?? existing.CommandLine;
                 existing.ExecutablePath = wmiInfo?.ExecutablePath ?? existing.ExecutablePath;
 
-                if (existing.IconSource == null && existing.ExecutablePath != null)
-                {
-                    existing.IconSource = IconCache.GetIcon(existing.ExecutablePath);
-                }
+                EnrichRow(existing);
             }
 
             // Safety net for the same reason - normally RemoveRow already handled this.
             for (int i = _rows.Count - 1; i >= 0; i--)
-{
-            var row = _rows[i];
-
-            if (!seenPids.Contains(row.Pid))
             {
-                _cache.Remove(row.Pid);
+                var row = _rows[i];
 
-                _performanceUpdater.Remove(row.Pid);
-
-                _rows.RemoveAt(i);
+                if (!seenPids.Contains(row.Pid))
+                {
+                    _cache.Remove(row.Pid);
+                    _performanceUpdater.Remove(row.Pid);
+                    _serviceHostResolver.Remove(row.Pid);
+                    _rows.RemoveAt(i);
+                }
             }
-}
 
-           foreach (var p in processes) p.Dispose();
-            StatusText.Text = $"{_rows.Count} processes  |  live  |  updated {DateTime.Now:HH:mm:ss}";
+            foreach (var p in processes) p.Dispose();
+        }
+
+        /// <summary>
+        /// Fills in the fields that are cheap to cache but not worth recomputing every
+        /// tick: icon, Company/Description (from FileVersionInfo, keyed by path so a
+        /// second svchost.exe row is free), and hosted-service names for svchost-style
+        /// processes. Safe to call repeatedly - each piece only does real work once
+        /// per unique path/PID until its own cache says otherwise.
+        /// </summary>
+        private void EnrichRow(ProcessRow row)
+        {
+            if (row.ExecutablePath != null)
+            {
+                if (row.IconSource == null)
+                    row.IconSource = IconCache.GetIcon(row.ExecutablePath);
+
+                if (row.Company == null && row.Description == null)
+                {
+                    var info = VersionInfoCache.Get(row.ExecutablePath);
+                    row.Company = info.Company;
+                    row.Description = info.Description;
+                }
+            }
+
+            row.HostedServices = _serviceHostResolver.Resolve(row.Pid, row.Name);
         }
 
         private void FilterBox_TextChanged(object sender, System.Windows.Controls.TextChangedEventArgs e)
@@ -163,8 +209,17 @@ namespace ProcessInvestigator
             string text = FilterBox.Text.Trim();
             _view.Filter = string.IsNullOrEmpty(text)
                 ? null
-                : o => ((ProcessRow)o).Name.Contains(text, StringComparison.OrdinalIgnoreCase)
-                       || ((ProcessRow)o).Pid.ToString().Contains(text);
+                : o => MatchesFilter((ProcessRow)o, text);
+        }
+
+        /// <summary>Search by name, PID, path or company - v1.2 goal, was name/PID only.</summary>
+        private static bool MatchesFilter(ProcessRow row, string text)
+        {
+            return row.Name.Contains(text, StringComparison.OrdinalIgnoreCase)
+                || row.Pid.ToString().Contains(text)
+                || (row.HostedServices?.Contains(text, StringComparison.OrdinalIgnoreCase) ?? false)
+                || (row.ExecutablePath?.Contains(text, StringComparison.OrdinalIgnoreCase) ?? false)
+                || (row.Company?.Contains(text, StringComparison.OrdinalIgnoreCase) ?? false);
         }
 
         private ProcessRow? SelectedRow => ProcessGrid.SelectedItem as ProcessRow;
@@ -221,7 +276,8 @@ namespace ProcessInvestigator
 
         protected override void OnClosed(EventArgs e)
         {
-            _timer.Stop();
+            _fastTimer.Stop();
+            _slowTimer.Stop();
             _watcher.Dispose();
             base.OnClosed(e);
         }

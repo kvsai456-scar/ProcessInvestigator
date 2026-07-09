@@ -25,7 +25,7 @@
             <Grid Grid.Column="0">
                 <TextBox x:Name="FilterBox" Style="{StaticResource SearchBox}"
                          TextChanged="FilterBox_TextChanged"/>
-                <TextBlock x:Name="FilterHint" Text="Search by name or PID..."
+                <TextBlock x:Name="FilterHint" Text="Search by name, PID, path or company..."
                            Foreground="{StaticResource TextSecondary}" FontSize="13"
                            Margin="12,0,0,0" VerticalAlignment="Center" IsHitTestVisible="False"/>
             </Grid>
@@ -49,13 +49,14 @@
                       CanUserSortColumns="True" SelectionMode="Single">
                 <DataGrid.Columns>
 
-                    <!-- Icon + Name -->
-                    <DataGridTemplateColumn Header="Name" Width="240" SortMemberPath="Name">
+                    <!-- Icon + Name (shows hosted service names for svchost.exe-style rows) -->
+                    <DataGridTemplateColumn Header="Name" Width="260" SortMemberPath="Name">
                         <DataGridTemplateColumn.CellTemplate>
                             <DataTemplate>
-                                <StackPanel Orientation="Horizontal">
+                                <StackPanel Orientation="Horizontal" ToolTip="{Binding DisplayName}">
                                     <Image Source="{Binding IconSource}" Width="18" Height="18" Margin="0,0,10,0"/>
-                                    <TextBlock Text="{Binding Name}" VerticalAlignment="Center" FontSize="13"/>
+                                    <TextBlock Text="{Binding DisplayName}" VerticalAlignment="Center" FontSize="13"
+                                               TextTrimming="CharacterEllipsis"/>
                                 </StackPanel>
                             </DataTemplate>
                         </DataGridTemplateColumn.CellTemplate>
@@ -80,7 +81,30 @@
                     </DataGridTemplateColumn>
 
                     <DataGridTextColumn Header="Memory" Binding="{Binding MemoryDisplay}" Width="90"/>
+                    <DataGridTextColumn Header="Threads" Binding="{Binding ThreadCount}" Width="65"/>
+                    <DataGridTextColumn Header="Handles" Binding="{Binding HandleCount}" Width="70"/>
                     <DataGridTextColumn Header="Parent PID" Binding="{Binding ParentPid}" Width="90"/>
+
+                    <DataGridTextColumn Header="Company" Binding="{Binding Company}" Width="150">
+                        <DataGridTextColumn.ElementStyle>
+                            <Style TargetType="TextBlock">
+                                <Setter Property="Foreground" Value="{StaticResource TextSecondary}"/>
+                                <Setter Property="FontSize" Value="12"/>
+                                <Setter Property="TextTrimming" Value="CharacterEllipsis"/>
+                            </Style>
+                        </DataGridTextColumn.ElementStyle>
+                    </DataGridTextColumn>
+
+                    <DataGridTextColumn Header="Description" Binding="{Binding Description}" Width="180">
+                        <DataGridTextColumn.ElementStyle>
+                            <Style TargetType="TextBlock">
+                                <Setter Property="Foreground" Value="{StaticResource TextSecondary}"/>
+                                <Setter Property="FontSize" Value="12"/>
+                                <Setter Property="TextTrimming" Value="CharacterEllipsis"/>
+                            </Style>
+                        </DataGridTextColumn.ElementStyle>
+                    </DataGridTextColumn>
+
                     <DataGridTextColumn Header="Path" Binding="{Binding ExecutablePath}" Width="*">
                         <DataGridTextColumn.ElementStyle>
                             <Style TargetType="TextBlock">

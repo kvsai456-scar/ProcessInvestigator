@@ -172,6 +172,90 @@ namespace ProcessInvestigator.Services
                 .ToList();
         }
 
+        /// <summary>The other half of the tree from GetParentChain: processes currently
+        /// pointing at this PID as their parent. Snapshot-based, so a child that has
+        /// already exited by the time this runs simply won't appear - same limitation
+        /// GetParentChain already has for exited ancestors.</summary>
+        public List<ParentChainEntry> GetDirectChildren(int pid, Dictionary<int, WmiProcInfo> snapshot)
+        {
+            var children = new List<ParentChainEntry>();
+            foreach (var kvp in snapshot)
+            {
+                if (kvp.Value.ParentPid != pid || kvp.Key == pid)
+                    continue;
+
+                string name = "";
+                string? path = kvp.Value.ExecutablePath;
+                bool running = false;
+                try
+                {
+                    using var p = Process.GetProcessById(kvp.Key);
+                    name = p.ProcessName;
+                    running = true;
+                }
+                catch
+                {
+                    name = "(exited)";
+                }
+
+                children.Add(new ParentChainEntry { Pid = kvp.Key, Name = name, ExecutablePath = path, StillRunning = running });
+            }
+            return children.OrderBy(c => c.Pid).ToList();
+        }
+
+        /// <summary>
+        /// SHA-256 and MD5 of the executable on disk - the two hashes most triage
+        /// workflows / VirusTotal lookups expect. Reads the whole file once and feeds
+        /// both algorithms from the same stream rather than opening it twice.
+        /// Large files (multi-GB) are skipped rather than hashed in full, since that
+        /// would block the Investigate dialog for a long time for little benefit.
+        /// </summary>
+        private const long MaxHashableFileBytes = 500L * 1024 * 1024; // 500 MB
+
+        public (string? Sha256, string? Md5) ComputeFileHashes(string? filePath)
+        {
+            if (string.IsNullOrEmpty(filePath) || !File.Exists(filePath))
+                return (null, null);
+
+            try
+            {
+                var length = new FileInfo(filePath).Length;
+                if (length > MaxHashableFileBytes)
+                    return (null, null);
+
+                using var stream = File.OpenRead(filePath);
+                using var sha256 = System.Security.Cryptography.SHA256.Create();
+                using var md5 = System.Security.Cryptography.MD5.Create();
+
+                var buffer = new byte[81920];
+                int read;
+                while ((read = stream.Read(buffer, 0, buffer.Length)) > 0)
+                {
+                    sha256.TransformBlock(buffer, 0, read, null, 0);
+                    md5.TransformBlock(buffer, 0, read, null, 0);
+                }
+                sha256.TransformFinalBlock(Array.Empty<byte>(), 0, 0);
+                md5.TransformFinalBlock(Array.Empty<byte>(), 0, 0);
+
+                return (
+                    Convert.ToHexString(sha256.Hash!).ToLowerInvariant(),
+                    Convert.ToHexString(md5.Hash!).ToLowerInvariant());
+            }
+            catch
+            {
+                // File locked, deleted since the process launched, or access denied.
+                return (null, null);
+            }
+        }
+
+        public long? GetFileSize(string? filePath)
+        {
+            if (string.IsNullOrEmpty(filePath) || !File.Exists(filePath))
+                return null;
+            try { return new FileInfo(filePath).Length; }
+            catch { return null; }
+        }
+
         /// <summary>Authenticode signature check - flags unsigned binaries running from odd locations.</summary>
         public SignatureInfo GetSignatureInfo(string? filePath)
         {
@@ -222,10 +306,13 @@ namespace ProcessInvestigator.Services
 
             report.User = GetOwner(pid);
             report.ParentChain = GetParentChain(pid, snapshot);
+            report.Children = GetDirectChildren(pid, snapshot);
             report.LoadedModules = GetLoadedModules(pid);
             report.AssociatedServices = GetAssociatedServices(pid);
             report.NetworkConnections = GetNetworkConnections(pid);
             report.Signature = GetSignatureInfo(report.ExecutablePath);
+            report.FileSizeBytes = GetFileSize(report.ExecutablePath);
+            (report.Sha256Hash, report.Md5Hash) = ComputeFileHashes(report.ExecutablePath);
 
             // Heuristic flags worth surfacing up front, mirroring what stood out
             // in the manual XMRig investigation (SYSTEM process outside expected
@@ -239,6 +326,10 @@ namespace ProcessInvestigator.Services
             if (report.AssociatedServices.Any(s => s.ServiceDll == null && s.PathName?.Contains("svchost", StringComparison.OrdinalIgnoreCase) == true))
             {
                 report.Notes.Add("Service hosted by svchost.exe with no resolvable ServiceDll.");
+            }
+            if (report.FileSizeBytes > MaxHashableFileBytes)
+            {
+                report.Notes.Add($"Executable is larger than {MaxHashableFileBytes / (1024 * 1024)} MB - hashes were skipped.");
             }
 
             return report;

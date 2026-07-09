@@ -59,7 +59,13 @@ namespace ProcessInvestigator.Models
         public DateTime? StartTime { get; set; }
         public DateTime GeneratedAt { get; set; } = DateTime.Now;
 
+        public long? FileSizeBytes { get; set; }
+        public string? Sha256Hash { get; set; }
+        public string? Md5Hash { get; set; }
+
         public List<ParentChainEntry> ParentChain { get; set; } = new();
+        /// <summary>Processes currently reporting this PID as their ParentProcessId - the "downward" half of the process tree.</summary>
+        public List<ParentChainEntry> Children { get; set; } = new();
         public List<ModuleInfo> LoadedModules { get; set; } = new();
         public List<ServiceInfo> AssociatedServices { get; set; } = new();
         public List<NetworkConnectionInfo> NetworkConnections { get; set; } = new();

@@ -9,11 +9,15 @@ namespace ProcessInvestigator.Services
     /// Updates live performance statistics for processes that are
     /// already present in the ProcessCache.
     ///
-    /// Responsibility:
-    ///   - CPU %
-    ///   - Working Set (RAM)
-    ///   - Thread Count
-    ///   - Handle Count
+    /// Split into two passes on purpose:
+    ///   - Update(): CPU% and Working Set - both are cheap field reads off an
+    ///     already-open Process handle, safe to run every second.
+    ///   - UpdateThreadsAndHandles(): Threads/Handles - process.Threads forces
+    ///     a full toolhelp snapshot of the *entire system's* thread table on
+    ///     every access, which is genuinely expensive. Running that for every
+    ///     cached process on a 1s tick was blocking the UI thread badly enough
+    ///     to make scrolling laggy, so it's called from the slower reconcile
+    ///     tick instead, where the cost is amortized over a longer interval.
     ///
     /// It NEVER creates or removes ProcessRow objects.
     /// </summary>
@@ -55,9 +59,6 @@ namespace ProcessInvestigator.Services
 
                     // Memory
                     row.MemoryBytes = process.WorkingSet64;
-
-                    // Threads
-                   
                 }
                 catch
                 {
@@ -66,6 +67,27 @@ namespace ProcessInvestigator.Services
             }
 
             _lastSample = now;
+        }
+
+        /// <summary>
+        /// Threads/Handles - deliberately NOT part of the 1s Update() pass, see class
+        /// remarks. Call this from the slower tick instead.
+        /// </summary>
+        public void UpdateThreadsAndHandles(ProcessCache cache)
+        {
+            foreach (var row in cache.Values)
+            {
+                try
+                {
+                    using var process = Process.GetProcessById(row.Pid);
+                    row.ThreadCount = process.Threads.Count;
+                    row.HandleCount = process.HandleCount;
+                }
+                catch
+                {
+                    // Process exited or access denied.
+                }
+            }
         }
 
         public void Remove(int pid)

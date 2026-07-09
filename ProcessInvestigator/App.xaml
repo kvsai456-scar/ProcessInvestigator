@@ -10,6 +10,8 @@
             </ResourceDictionary.MergedDictionaries>
             <conv:CpuHeatColorConverter x:Key="CpuHeatColorConverter"/>
             <conv:PercentToWidthConverter x:Key="PercentToWidthConverter"/>
+            <conv:BoolToWeightConverter x:Key="BoolToWeightConverter"/>
+            <conv:RunningToBrushConverter x:Key="RunningToBrushConverter"/>
         </ResourceDictionary>
     </Application.Resources>
 </Application>

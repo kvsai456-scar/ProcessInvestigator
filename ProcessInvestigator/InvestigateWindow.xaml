@@ -1,9 +1,18 @@
 <Window x:Class="ProcessInvestigator.InvestigateWindow"
         xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
         xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        xmlns:local="clr-namespace:ProcessInvestigator"
         Title="Investigate Process" Height="620" Width="820"
         Background="{StaticResource WindowBg}"
         FontFamily="Segoe UI Variable, Segoe UI">
+    <Window.Resources>
+        <HierarchicalDataTemplate DataType="{x:Type local:InvestigateWindow+TreeNode}" ItemsSource="{Binding Children}">
+            <TextBlock Text="{Binding Text}"
+                       FontFamily="Consolas" FontSize="13"
+                       FontWeight="{Binding IsCurrent, Converter={StaticResource BoolToWeightConverter}}"
+                       Foreground="{Binding StillRunning, Converter={StaticResource RunningToBrushConverter}}"/>
+        </HierarchicalDataTemplate>
+    </Window.Resources>
     <DockPanel Margin="16">
         <StackPanel DockPanel.Dock="Top" Margin="0,0,0,12">
             <TextBlock x:Name="TitleText" FontSize="19" FontWeight="SemiBold" Foreground="{StaticResource TextPrimary}"/>
@@ -31,8 +40,15 @@
                         <TextBlock x:Name="OverviewText" TextWrapping="Wrap" FontFamily="Consolas" FontSize="13"/>
                     </StackPanel>
                 </TabItem>
-                <TabItem Header="Parent Chain">
-                    <ListBox x:Name="ParentChainList" FontFamily="Consolas" FontSize="13" BorderThickness="0" Margin="8"/>
+                <TabItem Header="Process Tree">
+                    <TreeView x:Name="ProcessTreeView" BorderThickness="0" Margin="8"
+                              Background="Transparent">
+                        <TreeView.ItemContainerStyle>
+                            <Style TargetType="TreeViewItem">
+                                <Setter Property="IsExpanded" Value="True"/>
+                            </Style>
+                        </TreeView.ItemContainerStyle>
+                    </TreeView>
                 </TabItem>
                 <TabItem Header="Loaded DLLs">
                     <DataGrid x:Name="ModulesGrid" Style="{StaticResource CleanDataGrid}"

@@ -43,6 +43,56 @@ namespace ProcessInvestigator.Models
 
         public string MemoryDisplay => $"{MemoryBytes / 1024.0 / 1024.0:N1} MB";
 
+        private int _threadCount;
+        public int ThreadCount
+        {
+            get => _threadCount;
+            set { _threadCount = value; OnPropertyChanged(); }
+        }
+
+        private int _handleCount;
+        public int HandleCount
+        {
+            get => _handleCount;
+            set { _handleCount = value; OnPropertyChanged(); }
+        }
+
+        private string? _company;
+        /// <summary>From the exe's FileVersionInfo. Resolved lazily/once per path - see VersionInfoCache.</summary>
+        public string? Company
+        {
+            get => _company;
+            set { _company = value; OnPropertyChanged(); }
+        }
+
+        private string? _description;
+        /// <summary>From the exe's FileVersionInfo (FileDescription). Resolved lazily/once per path.</summary>
+        public string? Description
+        {
+            get => _description;
+            set { _description = value; OnPropertyChanged(); }
+        }
+
+        private string? _hostedServices;
+        /// <summary>
+        /// For host processes like svchost.exe/dllhost.exe that can run multiple Windows
+        /// services inside one PID, this holds the friendly "(ServiceA, ServiceB)" summary
+        /// resolved via ServiceHostResolver. Null for ordinary single-purpose processes.
+        /// </summary>
+        public string? HostedServices
+        {
+            get => _hostedServices;
+            set { _hostedServices = value; OnPropertyChanged(); OnPropertyChanged(nameof(DisplayName)); }
+        }
+
+        /// <summary>
+        /// What the Name column actually shows: "svchost.exe (DcomLaunch, PlugPlay)" for
+        /// service-hosting processes, otherwise just the plain process name.
+        /// </summary>
+        public string DisplayName => string.IsNullOrEmpty(HostedServices)
+            ? Name
+            : $"{Name} ({HostedServices})";
+
         public event PropertyChangedEventHandler? PropertyChanged;
         private void OnPropertyChanged([CallerMemberName] string? name = null)
             => PropertyChanged?.Invoke(this, new PropertyChangedEventArgs(name));
