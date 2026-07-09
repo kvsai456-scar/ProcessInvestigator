@@ -2,7 +2,9 @@ using System.Collections.ObjectModel;
 using System.ComponentModel;
 using System.Diagnostics;
 using System.IO;
+using System.Threading.Tasks;
 using System.Windows;
+using System.Windows.Input;
 using System.Windows.Threading;
 using ProcessInvestigator.Models;
 using ProcessInvestigator.Services;
@@ -224,15 +226,29 @@ namespace ProcessInvestigator
 
         private ProcessRow? SelectedRow => ProcessGrid.SelectedItem as ProcessRow;
 
-        private void Investigate_Click(object sender, RoutedEventArgs e)
+        /// <summary>
+        /// BuildReport now also enumerates handles and queries the security token (v1.4),
+        /// on top of the v1.3 hashing/module/parent-chain work it already did - enough combined
+        /// work that it's worth moving off the UI thread so the window doesn't appear to freeze
+        /// for a moment on processes with a lot of open handles.
+        /// </summary>
+        private async void Investigate_Click(object sender, RoutedEventArgs e)
         {
             var row = SelectedRow;
             if (row == null) return;
 
-            var wmi = _service.GetWmiSnapshot();
-            var report = _service.BuildReport(row.Pid, wmi);
-            var win = new InvestigateWindow(report) { Owner = this };
-            win.Show();
+            Mouse.OverrideCursor = Cursors.Wait;
+            try
+            {
+                var wmi = _service.GetWmiSnapshot();
+                var report = await Task.Run(() => _service.BuildReport(row.Pid, wmi));
+                var win = new InvestigateWindow(report) { Owner = this };
+                win.Show();
+            }
+            finally
+            {
+                Mouse.OverrideCursor = null;
+            }
         }
 
         private void OpenFileLocation_Click(object sender, RoutedEventArgs e)

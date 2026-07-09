@@ -49,6 +49,38 @@ namespace ProcessInvestigator
             ModulesGrid.ItemsSource = _report.LoadedModules;
             ServicesGrid.ItemsSource = _report.AssociatedServices;
             NetworkGrid.ItemsSource = _report.NetworkConnections;
+
+            HandlesGrid.ItemsSource = _report.Handles;
+            HandlesNoteText.Text = _report.HandlesTruncated
+                ? $"Showing first {_report.Handles.Count} handles (list truncated - this process has more open than that)."
+                : $"{_report.Handles.Count} open handles.";
+
+            PopulateToken();
+        }
+
+        private void PopulateToken()
+        {
+            var t = _report.Token;
+            if (t == null)
+            {
+                TokenText.Text = "(not available)";
+                return;
+            }
+            if (t.Error != null)
+            {
+                TokenText.Text = t.Error;
+                PrivilegesGrid.ItemsSource = null;
+                return;
+            }
+
+            TokenText.Text =
+                $"User:             {t.UserAccount ?? "(unresolved)"}\n" +
+                $"SID:              {t.UserSid ?? "(unavailable)"}\n" +
+                $"Integrity level:  {t.IntegrityLevel}\n" +
+                $"Elevated:         {t.IsElevated} (type: {t.ElevationType})\n" +
+                $"Session ID:       {t.SessionId}";
+
+            PrivilegesGrid.ItemsSource = t.Privileges;
         }
 
         private static string FormatFileSize(long? bytes)

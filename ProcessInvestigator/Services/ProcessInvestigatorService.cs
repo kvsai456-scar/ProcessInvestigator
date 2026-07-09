@@ -91,6 +91,13 @@ namespace ProcessInvestigator.Services
             return chain;
         }
 
+        /// <summary>
+        /// v1.4 "Module viewer" goal: the v1.3 Loaded-DLLs list enriched with base address
+        /// (useful for spotting manually-mapped/reflectively-loaded modules that don't line up
+        /// with where the loader would normally place them) and Company/Description/FileVersion
+        /// from each module's own version resource (not just the main executable's), via the
+        /// same VersionInfoCache the process grid's Company/Description columns use.
+        /// </summary>
         public List<ModuleInfo> GetLoadedModules(int pid)
         {
             var modules = new List<ModuleInfo>();
@@ -99,11 +106,22 @@ namespace ProcessInvestigator.Services
                 using var p = Process.GetProcessById(pid);
                 foreach (ProcessModule m in p.Modules)
                 {
+                    string? fileName = null;
+                    IntPtr baseAddr = IntPtr.Zero;
+                    try { fileName = m.FileName; } catch { }
+                    try { baseAddr = m.BaseAddress; } catch { }
+
+                    var version = VersionInfoCache.Get(fileName);
+
                     modules.Add(new ModuleInfo
                     {
                         ModuleName = m.ModuleName,
-                        FileName = m.FileName,
-                        ModuleMemorySize = m.ModuleMemorySize
+                        FileName = fileName,
+                        ModuleMemorySize = SafeMemorySize(m),
+                        BaseAddress = baseAddr != IntPtr.Zero ? $"0x{baseAddr.ToInt64():X}" : null,
+                        Company = version.Company,
+                        Description = version.Description,
+                        FileVersion = GetFileVersion(fileName)
                     });
                 }
             }
@@ -112,6 +130,18 @@ namespace ProcessInvestigator.Services
                 // Access denied (protected process) or process exited mid-inspection.
             }
             return modules.OrderBy(m => m.ModuleName, StringComparer.OrdinalIgnoreCase).ToList();
+        }
+
+        private static long SafeMemorySize(ProcessModule m)
+        {
+            try { return m.ModuleMemorySize; } catch { return 0; }
+        }
+
+        private static string? GetFileVersion(string? path)
+        {
+            if (string.IsNullOrEmpty(path) || !File.Exists(path)) return null;
+            try { return FileVersionInfo.GetVersionInfo(path).FileVersion; }
+            catch { return null; }
         }
 
         /// <summary>
@@ -314,6 +344,10 @@ namespace ProcessInvestigator.Services
             report.FileSizeBytes = GetFileSize(report.ExecutablePath);
             (report.Sha256Hash, report.Md5Hash) = ComputeFileHashes(report.ExecutablePath);
 
+            report.Token = TokenInspector.GetTokenInfo(pid);
+            report.Handles = HandleEnumerator.GetHandles(pid, out bool truncated);
+            report.HandlesTruncated = truncated;
+
             // Heuristic flags worth surfacing up front, mirroring what stood out
             // in the manual XMRig investigation (SYSTEM process outside expected
             // paths, unsigned binary, listed under a generic host process, etc.)
@@ -330,6 +364,14 @@ namespace ProcessInvestigator.Services
             if (report.FileSizeBytes > MaxHashableFileBytes)
             {
                 report.Notes.Add($"Executable is larger than {MaxHashableFileBytes / (1024 * 1024)} MB - hashes were skipped.");
+            }
+            if (report.Token?.Privileges.Any(p => p.Name == "SeDebugPrivilege" && p.Enabled) == true)
+            {
+                report.Notes.Add("SeDebugPrivilege is enabled - this process can open/inspect other processes regardless of owner, including credential-holding ones like lsass.exe.");
+            }
+            if (report.HandlesTruncated)
+            {
+                report.Notes.Add($"More than {HandleEnumerator.MaxHandlesPerProcess} open handles - handle list was truncated.");
             }
 
             return report;

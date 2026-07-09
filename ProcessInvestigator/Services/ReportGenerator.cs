@@ -67,10 +67,13 @@ namespace ProcessInvestigator.Services
             }
 
             sb.AppendLine();
-            sb.AppendLine($"5. Loaded Modules / DLLs ({r.LoadedModules.Count} total)");
+            sb.AppendLine($"5. Loaded Modules ({r.LoadedModules.Count} total)");
             foreach (var m in r.LoadedModules)
             {
-                sb.AppendLine($"   - {m.ModuleName,-30} {m.FileName}");
+                sb.AppendLine($"   - {m.ModuleName,-30} base={m.BaseAddress ?? "?",-14} {m.FileName}");
+                if (!string.IsNullOrEmpty(m.Company) || !string.IsNullOrEmpty(m.Description))
+                    sb.AppendLine($"       {m.Company ?? "(unknown company)"} - {m.Description ?? "(no description)"}" +
+                        (m.FileVersion != null ? $" v{m.FileVersion}" : ""));
             }
 
             sb.AppendLine();
@@ -84,10 +87,36 @@ namespace ProcessInvestigator.Services
                 sb.AppendLine($"   - {n.Protocol} {n.LocalAddress}:{n.LocalPort} -> {n.RemoteAddress}:{n.RemotePort} [{n.State}]");
             }
 
+            sb.AppendLine();
+            sb.AppendLine("7. Security Token");
+            if (r.Token?.Error != null)
+            {
+                sb.AppendLine($"   {r.Token.Error}");
+            }
+            else if (r.Token != null)
+            {
+                sb.AppendLine($"   User:            {r.Token.UserAccount ?? "(unresolved)"} ({r.Token.UserSid ?? "?"})");
+                sb.AppendLine($"   Integrity level: {r.Token.IntegrityLevel}");
+                sb.AppendLine($"   Elevated:        {r.Token.IsElevated} (type: {r.Token.ElevationType})");
+                sb.AppendLine($"   Session ID:      {r.Token.SessionId}");
+                var enabled = r.Token.Privileges.Where(p => p.Enabled).Select(p => p.Name).ToList();
+                sb.AppendLine($"   Enabled privileges ({enabled.Count}/{r.Token.Privileges.Count} total): " +
+                    (enabled.Count > 0 ? string.Join(", ", enabled) : "(none)"));
+            }
+
+            sb.AppendLine();
+            sb.AppendLine($"8. Handles ({r.Handles.Count} shown{(r.HandlesTruncated ? ", truncated" : "")})");
+            foreach (var grp in r.Handles.GroupBy(h => h.TypeName).OrderBy(g => g.Key))
+            {
+                sb.AppendLine($"   {grp.Key} ({grp.Count()}):");
+                foreach (var h in grp.OrderBy(x => x.Handle))
+                    sb.AppendLine($"     - 0x{h.Handle:X}" + (h.Name != null ? $"  {h.Name}" : ""));
+            }
+
             if (r.Notes.Count > 0)
             {
                 sb.AppendLine();
-                sb.AppendLine("7. Notes / Flags");
+                sb.AppendLine("9. Notes / Flags");
                 foreach (var note in r.Notes)
                     sb.AppendLine($"   * {note}");
             }

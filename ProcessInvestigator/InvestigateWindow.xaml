@@ -50,11 +50,16 @@
                         </TreeView.ItemContainerStyle>
                     </TreeView>
                 </TabItem>
-                <TabItem Header="Loaded DLLs">
+                <TabItem Header="Modules">
                     <DataGrid x:Name="ModulesGrid" Style="{StaticResource CleanDataGrid}"
                               AutoGenerateColumns="False" IsReadOnly="True" Margin="4">
                         <DataGrid.Columns>
-                            <DataGridTextColumn Header="Module" Binding="{Binding ModuleName}" Width="220"/>
+                            <DataGridTextColumn Header="Module" Binding="{Binding ModuleName}" Width="200"/>
+                            <DataGridTextColumn Header="Base Address" Binding="{Binding BaseAddress}" Width="120"/>
+                            <DataGridTextColumn Header="Size" Binding="{Binding ModuleMemorySize}" Width="80"/>
+                            <DataGridTextColumn Header="Company" Binding="{Binding Company}" Width="150"/>
+                            <DataGridTextColumn Header="Description" Binding="{Binding Description}" Width="180"/>
+                            <DataGridTextColumn Header="Version" Binding="{Binding FileVersion}" Width="90"/>
                             <DataGridTextColumn Header="Path" Binding="{Binding FileName}" Width="*"/>
                         </DataGrid.Columns>
                     </DataGrid>
@@ -82,6 +87,36 @@
                             <DataGridTextColumn Header="State" Binding="{Binding State}" Width="*"/>
                         </DataGrid.Columns>
                     </DataGrid>
+                </TabItem>
+                <TabItem Header="Handles">
+                    <DockPanel Margin="4">
+                        <TextBlock x:Name="HandlesNoteText" DockPanel.Dock="Top" Margin="4,4,4,8"
+                                   Foreground="{StaticResource TextSecondary}" FontSize="12" TextWrapping="Wrap"/>
+                        <DataGrid x:Name="HandlesGrid" Style="{StaticResource CleanDataGrid}"
+                                  AutoGenerateColumns="False" IsReadOnly="True">
+                            <DataGrid.Columns>
+                                <DataGridTextColumn Header="Handle" Binding="{Binding Handle, StringFormat=X}" Width="80"/>
+                                <DataGridTextColumn Header="Type" Binding="{Binding TypeName}" Width="150"/>
+                                <DataGridTextColumn Header="Name" Binding="{Binding Name}" Width="*"/>
+                            </DataGrid.Columns>
+                        </DataGrid>
+                    </DockPanel>
+                </TabItem>
+                <TabItem Header="Security Token">
+                    <DockPanel Margin="14">
+                        <TextBlock x:Name="TokenText" DockPanel.Dock="Top" TextWrapping="Wrap"
+                                   FontFamily="Consolas" FontSize="13" Margin="0,0,0,12"/>
+                        <TextBlock DockPanel.Dock="Top" Text="Privileges" FontWeight="SemiBold"
+                                   Foreground="{StaticResource TextPrimary}" Margin="0,0,0,6"/>
+                        <DataGrid x:Name="PrivilegesGrid" Style="{StaticResource CleanDataGrid}"
+                                  AutoGenerateColumns="False" IsReadOnly="True">
+                            <DataGrid.Columns>
+                                <DataGridTextColumn Header="Privilege" Binding="{Binding Name}" Width="260"/>
+                                <DataGridTextColumn Header="Enabled" Binding="{Binding Enabled}" Width="80"/>
+                                <DataGridTextColumn Header="Enabled by Default" Binding="{Binding EnabledByDefault}" Width="*"/>
+                            </DataGrid.Columns>
+                        </DataGrid>
+                    </DockPanel>
                 </TabItem>
             </TabControl>
         </Border>
